@@ -1,0 +1,286 @@
+// Ganpati CHS Portal — data model
+//
+// NOTE ON DATABASE_URL: the connection string is NOT stored statically in .env.
+// It is built at runtime from AWS Secrets Manager (see src/lib/getDatabaseUrl.ts),
+// which sets process.env.DATABASE_URL before PrismaClient is instantiated.
+// For Prisma CLI commands use `npm run db:push` / `db:migrate` / `db:studio`,
+// which go through scripts/prisma-cli.ts and inject the same runtime URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  MEMBER
+  COMMITTEE
+  ADMIN
+}
+
+enum MemberStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVOKED
+}
+
+enum NoticeCategory {
+  URGENT
+  GENERAL
+  MEETING
+}
+
+enum AuditAction {
+  LOGIN
+  LOGIN_FAILED
+  LOGOUT
+  TC_ACCEPT
+  APPROVE
+  REJECT
+  REVOKE
+  REINSTATE
+  UPLOAD
+  UPDATE
+  DELETE
+  DOWNLOAD
+  VIEW_NOTICE
+  POST_NOTICE
+  UPDATE_NOTICE
+  DELETE_NOTICE
+}
+
+// ---------------------------------------------------------------------------
+// Auth.js (NextAuth v5) adapter models
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String       @id @default(cuid())
+  googleId      String?      @unique
+  email         String       @unique
+  emailVerified DateTime?
+  name          String?
+  // Google profile picture. Named `image` because the Auth.js adapter requires
+  // this exact field name; exposed to the app as `photoUrl`.
+  image         String?
+  role          Role         @default(MEMBER)
+  status        MemberStatus @default(PENDING)
+
+  // Member directory fields (optional, filled in by admin)
+  flatNumber String?
+  phone      String?
+
+  // Terms & Conditions acceptance
+  tcVersionAccepted Int?
+  tcAcceptedAt      DateTime?
+
+  approvedAt   DateTime?
+  approvedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts        Account[]
+  sessions        Session[]
+  adminCredential AdminCredential?
+  documents       Document[]       @relation("DocumentUploader")
+  notices         Notice[]         @relation("NoticeAuthor")
+  noticeReads     NoticeRead[]
+  auditLogs       AuditLog[]
+
+  @@index([status])
+  @@index([role])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------------------------------------------------------------------------
+// Admin credentials (seeded manually — no self-signup)
+// ---------------------------------------------------------------------------
+
+model AdminCredential {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  userId       String    @unique
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Rate-limiting ledger for login attempts. DB-backed rather than in-memory so
+/// it survives the stateless/serverless function model on Vercel.
+model LoginAttempt {
+  id         String   @id @default(cuid())
+  identifier String
+  ipAddress  String?
+  success    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([identifier, createdAt])
+  @@index([ipAddress, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Terms & Conditions (versioned)
+// ---------------------------------------------------------------------------
+
+model TermsVersion {
+  id        String   @id @default(cuid())
+  version   Int      @unique
+  title     String
+  body      String   @db.Text
+  active    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([active])
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+/// Fixed, seeded category list. A table (not an enum) so that ordering and
+/// member visibility can be changed without a migration.
+model DocumentCategory {
+  id               String  @id @default(cuid())
+  slug             String  @unique
+  name             String
+  sortOrder        Int
+  /// false for the automated QA folder, which is hidden from members entirely.
+  visibleToMembers Boolean @default(true)
+  /// Categories whose downloads get a per-member watermark (see TODO in lib/pdf).
+  sensitive        Boolean @default(false)
+
+  documents Document[]
+
+  @@index([sortOrder])
+}
+
+model Document {
+  id               String   @id @default(cuid())
+  title            String
+  description      String?
+  categoryId       String
+  s3Key            String   @unique
+  originalFileName String
+  fileType         String
+  fileSizeBytes    Int
+  visibleToMembers Boolean  @default(true)
+  uploadedById     String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  category   DocumentCategory @relation(fields: [categoryId], references: [id])
+  uploadedBy User             @relation("DocumentUploader", fields: [uploadedById], references: [id])
+
+  @@index([categoryId, createdAt])
+  @@index([createdAt])
+  @@index([visibleToMembers])
+}
+
+// ---------------------------------------------------------------------------
+// Notice board
+// ---------------------------------------------------------------------------
+
+model Notice {
+  id                String         @id @default(cuid())
+  title             String
+  body              String         @db.Text
+  category          NoticeCategory @default(GENERAL)
+  attachmentS3Key   String?
+  attachmentName    String?
+  attachmentType    String?
+  pinned            Boolean        @default(false)
+  expiresAt         DateTime?
+  createdById       String
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  createdBy User         @relation("NoticeAuthor", fields: [createdById], references: [id])
+  reads     NoticeRead[]
+
+  @@index([pinned, createdAt])
+  @@index([createdAt])
+}
+
+model NoticeRead {
+  id       String   @id @default(cuid())
+  noticeId String
+  userId   String
+  readAt   DateTime @default(now())
+
+  notice Notice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([noticeId, userId])
+  @@index([noticeId])
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  userId     String?
+  action     AuditAction
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([createdAt])
+}

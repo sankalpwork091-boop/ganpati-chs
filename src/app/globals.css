@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/*
+  Ganpati CHS portal palette.
+
+  Deep slate for structure, a warm saffron/amber for accents — institutional
+  rather than decorative, and legible on the projector screens these notices
+  tend to get shown on at general body meetings.
+
+  The portal is light-mode only by design: members read scanned documents and
+  architectural drawings, which are all white-background artefacts, and a dark
+  chrome around them fights the content.
+*/
+
+@theme {
+  --color-ink-50: #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e2e8f0;
+  --color-ink-300: #cbd5e1;
+  --color-ink-400: #94a3b8;
+  --color-ink-500: #64748b;
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-800: #1e293b;
+  --color-ink-900: #0f172a;
+
+  --color-saffron-50: #fffbeb;
+  --color-saffron-100: #fef3c7;
+  --color-saffron-200: #fde68a;
+  --color-saffron-400: #fbbf24;
+  --color-saffron-500: #f59e0b;
+  --color-saffron-600: #d97706;
+  --color-saffron-700: #b45309;
+  --color-saffron-800: #92400e;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-ink-50);
+  color: var(--color-ink-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Keyboard focus stays visible everywhere. */
+:focus-visible {
+  outline: 2px solid var(--color-saffron-600);
+  outline-offset: 2px;
+}
+
+@utility card {
+  background: #ffffff;
+  border: 1px solid var(--color-ink-200);
+  border-radius: 0.875rem;
+}
+
+/* Renders the lightweight markdown subset used in notices and the T&C:
+   **bold** and paragraph breaks. */
+@utility prose-notice {
+  line-height: 1.7;
+
+  & p {
+    margin-bottom: 0.9rem;
+  }
+
+  & p:last-child {
+    margin-bottom: 0;
+  }
+
+  & strong {
+    font-weight: 650;
+    color: var(--color-ink-900);
+  }
+}
