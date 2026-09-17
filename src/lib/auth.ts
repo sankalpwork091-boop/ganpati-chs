@@ -1,6 +1,6 @@
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
-import NextAuth, { type DefaultSession } from "next-auth";
+import NextAuth, { CredentialsSignin, type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import type { Adapter } from "next-auth/adapters";
@@ -34,6 +34,18 @@ declare module "next-auth" {
  * signing out and back in — the token never carries a stale status.
  */
 const SESSION_MAX_AGE_SECONDS = 30 * 60;
+
+/**
+ * A plain `throw new Error(...)` inside `authorize()` is NOT surfaced to the
+ * client — Auth.js only keeps the `code` off errors that are instances of its
+ * own `CredentialsSignin`, and downgrades anything else to a generic
+ * "Configuration" error with no code at all. Subclassing here is what lets the
+ * client tell "wrong password" apart from "rate limited" (see
+ * AdminLoginForm.tsx, which checks `result.code`).
+ */
+class RateLimitedSignin extends CredentialsSignin {
+  code = "rate_limited";
+}
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma) as Adapter,
@@ -75,9 +87,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             targetType: "admin",
             metadata: { username, reason: "rate_limited" },
           });
-          throw new Error(
-            `Too many failed attempts. Try again in ${limit.retryAfterMinutes} minutes.`,
-          );
+          throw new RateLimitedSignin();
         }
 
         const credential = await prisma.adminCredential.findUnique({

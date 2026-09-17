@@ -9,6 +9,14 @@ import { Button, ErrorNote, Spinner } from "@/components/ui";
 const FIELD_CLASS =
   "mt-1.5 w-full rounded-lg border border-ink-300 bg-white px-3.5 py-2.5 text-[15px] text-ink-900 placeholder:text-ink-400 focus:border-saffron-600 focus:outline-none";
 
+// Auth.js only preserves the `code` for errors that are instances of its own
+// CredentialsSignin — see the RateLimitedSignin class in lib/auth.ts. Any
+// other failure (wrong password, unknown username) arrives with no code at
+// all, and is deliberately shown as one vague message below so the form can't
+// be used to probe which usernames exist. Keep this window in sync with
+// ADMIN_LOGIN_LIMIT.windowMinutes in lib/rateLimit.ts.
+const RATE_LIMIT_WINDOW_MINUTES = 15;
+
 export function AdminLoginForm() {
   const router = useRouter();
   const [username, setUsername] = useState("");
@@ -28,12 +36,9 @@ export function AdminLoginForm() {
     });
 
     if (result?.error) {
-      // `authorize` throws a descriptive message when the attempt is rate
-      // limited; everything else is deliberately vague so the form can't be
-      // used to probe which usernames exist.
       setError(
-        result.code && result.code.startsWith("Too many")
-          ? result.code
+        result.code === "rate_limited"
+          ? `Too many failed attempts. Please try again in about ${RATE_LIMIT_WINDOW_MINUTES} minutes.`
           : "Incorrect username or password.",
       );
       setPassword("");

@@ -31,36 +31,80 @@ function ask(question: string): Promise<string> {
   });
 }
 
-/** Reads a line without echoing it to the terminal. */
+/**
+ * Reads a line without echoing it to the terminal.
+ *
+ * Deliberately does not use readline with a patched `_writeToOutput` — that
+ * method is a private, undocumented part of readline's internals, and its
+ * call pattern (one chunk per keystroke vs. a full-line redraw) varies enough
+ * across Node versions and terminals (Windows terminals especially) that it
+ * can silently drop or garble characters while still looking normal on
+ * screen. Reading raw keypresses directly is the portable way to do this.
+ */
 function askSecret(question: string): Promise<string> {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    const wasRaw = stdin.isRaw;
+    const canUseRawMode = stdin.isTTY && typeof stdin.setRawMode === "function";
 
-    const asMutable = rl as unknown as { _writeToOutput: (chunk: string) => void };
-    const originalWrite = asMutable._writeToOutput.bind(rl);
-    let muted = false;
+    process.stdout.write(question);
 
-    asMutable._writeToOutput = (chunk: string) => {
-      if (!muted) {
-        originalWrite(chunk);
-        return;
+    if (!canUseRawMode) {
+      // No TTY to mask against (e.g. input piped from a file) — fall back to
+      // a plain, visible read rather than hang.
+      const rl = readline.createInterface({ input: stdin, output: process.stdout });
+      rl.question("", (answer) => {
+        rl.close();
+        resolve(answer.trim());
+      });
+      return;
+    }
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
+
+    let input = "";
+
+    function cleanup() {
+      stdin.removeListener("data", onData);
+      stdin.setRawMode(Boolean(wasRaw));
+      stdin.pause();
+    }
+
+    function onData(chunk: string) {
+      for (const char of chunk) {
+        if (char === "\r" || char === "\n") {
+          cleanup();
+          process.stdout.write("\n");
+          resolve(input.trim());
+          return;
+        }
+        if (char === "") {
+          // Ctrl+C
+          cleanup();
+          process.stdout.write("\n");
+          reject(new Error("Cancelled."));
+          return;
+        }
+        if (char === "" || char === "\b") {
+          // Backspace / Delete
+          if (input.length > 0) {
+            input = input.slice(0, -1);
+            process.stdout.write("\b \b");
+          }
+          continue;
+        }
+        // Ignore other control characters (arrow keys, etc.) rather than
+        // silently accepting escape-sequence bytes into the password.
+        if (char.charCodeAt(0) >= 32) {
+          input += char;
+          process.stdout.write("*");
+        }
       }
-      // Echo nothing for the typed characters, but keep the prompt visible.
-      if (chunk.includes(question)) originalWrite(chunk);
-    };
+    }
 
-    rl.question(question, (answer) => {
-      muted = false;
-      rl.close();
-      process.stdout.write("\n");
-      resolve(answer.trim());
-    });
-
-    muted = true;
+    stdin.on("data", onData);
   });
 }
 
