@@ -5,7 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { recordAudit } from "@/lib/audit";
 import { ApiError, apiError, requireApiAdmin } from "@/lib/guards";
 import { prisma } from "@/lib/prisma";
-import { deleteObject, headObject, validateUpload } from "@/lib/s3";
+import { deleteObject, headObject, validateUpload, verifyFileSignature } from "@/lib/s3";
 import { notifyNewDocument } from "@/lib/ses";
 
 export const runtime = "nodejs";
@@ -152,6 +152,14 @@ export async function POST(request: Request) {
     if (!validation.ok) {
       await deleteObject(s3Key).catch(() => undefined);
       throw new ApiError(400, validation.reason!);
+    }
+
+    // Confirm the real bytes match the declared type — a spoofed Content-Type
+    // header or a renamed extension both pass every check above on their own.
+    const signatureOk = await verifyFileSignature(s3Key, facts.contentType);
+    if (!signatureOk) {
+      await deleteObject(s3Key).catch(() => undefined);
+      throw new ApiError(400, "The file's content does not match its declared type.");
     }
 
     const document = await prisma.document.create({

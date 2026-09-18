@@ -173,11 +173,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           role: true,
           status: true,
           tcVersionAccepted: true,
+          adminCredential: { select: { passwordChangedAt: true } },
         },
       });
 
       if (!dbUser) {
         // The account was deleted while the token was still alive.
+        return { ...session, user: undefined } as unknown as typeof session;
+      }
+
+      // A password reset invalidates every session issued before it, so a
+      // session that's already out there (stolen, or just left open) can't
+      // outlive the reset that was meant to shut it out.
+      const passwordChangedAt = dbUser.adminCredential?.passwordChangedAt;
+      if (
+        passwordChangedAt &&
+        typeof token.iat === "number" &&
+        token.iat * 1000 < passwordChangedAt.getTime()
+      ) {
         return { ...session, user: undefined } as unknown as typeof session;
       }
 

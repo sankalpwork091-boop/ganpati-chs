@@ -143,13 +143,17 @@ model VerificationToken {
 // ---------------------------------------------------------------------------
 
 model AdminCredential {
-  id           String    @id @default(cuid())
-  username     String    @unique
-  passwordHash String
-  userId       String    @unique
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  username          String    @unique
+  passwordHash      String
+  /// Bumped on every password reset. Sessions issued before this moment are
+  /// rejected in the `session` callback, so a reset can't be outrun by a
+  /// session token that's already out there.
+  passwordChangedAt DateTime  @default(now())
+  userId            String    @unique
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

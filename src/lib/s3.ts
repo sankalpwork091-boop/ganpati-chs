@@ -224,4 +224,67 @@ export async function deleteObject(key: string): Promise<void> {
   await s3().send(new DeleteObjectCommand({ Bucket: bucketName(), Key: key }));
 }
 
+// ---------------------------------------------------------------------------
+// Content verification
+// ---------------------------------------------------------------------------
+
+/** Enough bytes for file-type's container-format sniffing (its own recommendation). */
+const SIGNATURE_READ_BYTES = 4100;
+
+/** The shared header of every OLE2/Compound File Binary container. */
+const CFB_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+/**
+ * Legacy MS Office formats (.doc/.xls/.ppt) are all the same CFB container at
+ * the byte level — file-type deliberately doesn't guess further than that
+ * (https://github.com/sindresorhus/file-type#supported-file-types). Checking
+ * the shared signature directly still rules out a renamed executable/script.
+ */
+const CFB_CONTENT_TYPES = new Set([
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+]);
+
+/** Reads the first `byteLength` bytes of an object — enough to sniff its real type. */
+async function readObjectPrefix(
+  key: string,
+  byteLength: number = SIGNATURE_READ_BYTES,
+): Promise<Buffer | null> {
+  try {
+    const result = await s3().send(
+      new GetObjectCommand({
+        Bucket: bucketName(),
+        Key: key,
+        Range: `bytes=0-${byteLength - 1}`,
+      }),
+    );
+    if (!result.Body) return null;
+    return Buffer.from(await result.Body.transformToByteArray());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Confirms the object's real bytes match its declared content type, so a
+ * spoofed Content-Type header or a renamed extension can't smuggle a
+ * different file type past the declared-type checks in `validateUpload`.
+ */
+export async function verifyFileSignature(
+  key: string,
+  declaredContentType: string,
+): Promise<boolean> {
+  const prefix = await readObjectPrefix(key);
+  if (!prefix) return false;
+
+  if (CFB_CONTENT_TYPES.has(declaredContentType)) {
+    return prefix.subarray(0, CFB_SIGNATURE.length).equals(CFB_SIGNATURE);
+  }
+
+  const { fileTypeFromBuffer } = await import("file-type");
+  const detected = await fileTypeFromBuffer(prefix);
+  return detected?.mime === declaredContentType;
+}
+
 export { formatBytes } from "./formatBytes";

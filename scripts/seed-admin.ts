@@ -174,7 +174,7 @@ async function main() {
       }
       await prisma.adminCredential.update({
         where: { id: existing.id },
-        data: { passwordHash },
+        data: { passwordHash, passwordChangedAt: new Date() },
       });
       console.log(`\nPassword reset for admin "${normalisedUsername}".`);
       return;
